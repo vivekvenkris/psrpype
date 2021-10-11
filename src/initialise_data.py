@@ -3,12 +3,40 @@ import numpy as np
 from pathlib import Path, PurePath
 import psrchive as ps
 from astropy.time import Time
-from log import Logger, init_logging
-from utils import *
+from log import Logger
 import numpy.lib.recfunctions as rfn
 
 TIMES_FILE="times.dat"
 TOLERANCE=0.00010 # < 10 seconds in MJD
+
+
+def get_args():
+	argparser = argparse.ArgumentParser(description="Generate usual directory structure by symlinking files downloaded from DAP", 
+		formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+
+	required_group = argparser.add_argument_group('Required arguments')
+	required_group.add_argument("-o", "--out_directory", dest="out_dir", help="output directory", required=True)
+	required_group.add_argument("-p", "--pid", dest="pid", help="Project ID", required=True)
+
+
+	mutually_exclusive = argparser.add_argument_group('Mutually exclusive arguments')
+
+	group = mutually_exclusive.add_mutually_exclusive_group(required=True)
+	group.add_argument("-d", "--dirs", dest="dirs", help="directories to get files from", nargs='+', default=argparse.SUPPRESS)
+	group.add_argument("-f", "--files", dest="file_list", help="list of files", nargs='+', default=argparse.SUPPRESS)
+
+	argparser.add_argument("-e", "--extensions", dest="extensions", help="comma separated extensions of archive files to use", default=".ar,.cf,.rf,.zcf,.zrf")
+	argparser.add_argument("-b", "--backends", dest="backends", help="comma separated backends list to process, (default: ALL)")
+	argparser.add_argument("-s", "--sources", dest="sources", help="comma separated sources list to process, (default: ALL)")
+	argparser.add_argument("-c", "--centre_frequencies", dest="frequencies", help="comma separated centre frequencies list to process, (default: ALL)")
+
+	Logger.add_logger_argparse_options(argparser)
+
+
+
+	args = argparser.parse_args()
+	return args
+
 
 class FileInfo(object):
 	def __init__(self, file_name, archive):
@@ -50,34 +78,24 @@ class FileInfo(object):
 		return "{} {} {} {} {} {} \n".format(self.file_name, self.backend, self.source, self.cfreq, self.start_mjd, self.end_mjd)
 
 
-
-def get_args():
-	argparser = argparse.ArgumentParser(description="Generate usual directory structure by symlinking files downloaded from DAP")
-
-	group = argparser.add_mutually_exclusive_group(required=True)
-	group.add_argument("-d", "--dirs", dest="dirs", help="directories to get files from", nargs='+')
-	group.add_argument("-f", "--files", dest="file_list", help="list of files", nargs='+')
-
-	argparser.add_argument("-e", "--extensions", dest="extensions", help="comma separated extensions of archive files to use", default=".ar,.cf,.rf,.zcf,.zrf")
-	argparser.add_argument("-o", "--out_directory", dest="out_dir", help="output directory", required=True)
-	argparser.add_argument("-p", "--pid", dest="pid", help="Project ID", required=True)
-	argparser.add_argument("-v", "--verbose", dest="verbose", help="Enable verbose terminal logging", action="store_true")
-	argparser.add_argument("-b", "--backends", dest="backends", help="comma separated backends list to process", required=True)
-
-
-	args = argparser.parse_args()
-	return args
-
-
-
-def get_file_infos(file_list):
+def get_file_infos(file_list, backends, sources, frequencies):
+	logger = Logger.getInstance()
 	file_infos = []
 	for file in file_list:
 		ar = ps.Archive_load(file)
 
-		if(ar.get_backend_name() not in backends):
+		if(backends is not None and ar.get_backend_name() not in backends):
 			logger.debug("skipping " + file + " as not in backends list")
 			continue
+
+		if(sources is not None and ar.get_source_name() not in sources):
+			logger.debug("skipping " + file + " as not in sources list")
+			continue
+
+		if(frequencies is not None and ar.get_centre_frequency() not in frequencies):
+			logger.debug("skipping " + file + " as not in cenre frequencies list")
+			continue	
+
 		file_info = FileInfo(file, ar)
 		file_infos.append(file_info)
 		del ar
@@ -93,12 +111,11 @@ def get_times_for_cfreq(file_name, cfreq):
 	return times_for_cfreq
 
 
- 
-if __name__ == "__main__":
+def main():
 	np.set_printoptions(precision=8)
 
 	args = get_args()
-	logger = Logger.getInstance().logger
+	logger = Logger.getInstance(args)
 
 	directories = args.dirs if args.dirs is not None else ['standalone']
 	in_dir_paths = [Path(x) for x in directories]
@@ -113,7 +130,9 @@ if __name__ == "__main__":
 	out_dir = Path(args.out_dir)
 	out_dir.mkdir(exist_ok=True)
 
-	backends = args.backends.split(",")
+	backends = args.backends.split(",") if args.backends is not None else None
+	sources = args.sources.split(",") if args.sources is not None else None
+	frequencies = args.frequencies.split(",") if args.frequencies is not None else None 
 
 
 	for in_dir_path in in_dir_paths:
@@ -134,7 +153,7 @@ if __name__ == "__main__":
 			file_list = args.file_list
 
 		#Get file infos and sort by start time. 
-		file_infos=get_file_infos(file_list)
+		file_infos=get_file_infos(file_list, backends, sources, frequencies)
 		file_infos.sort(key=lambda x: x.start_mjd)
 		logger.debug(file_infos)
 
@@ -196,6 +215,12 @@ if __name__ == "__main__":
 				new_file_path.symlink_to(file_path)
 			else:
 				logger.warn(bytes(new_file_path).decode() + "already exists, skipping...")    
+
+
+ 
+if __name__ == "__main__":
+	main()
+	
 
 
 
