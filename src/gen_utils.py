@@ -5,25 +5,36 @@ import shlex
 from subprocess import call, PIPE, STDOUT
 from errno import ENOENT
 
-def guess_type(data):
-    types = [int, float, complex, str]
-    for typename in types:
+
+def get_nearest_even_number(number_int):
+        return number_int if int(number_int) % 2 == 0 else number_int-1
+
+
+def strip_quotes_and_spaces(value):
+    return value.replace("\"","").strip("\\s+")   
+
+def guess_and_change_dtype(value):
+
+    if "." in value:
+
         try:
-            val = typename(data)
-            if typename == str:
-                if data.lower() == "true":
-                    return True
-                elif data.lower() == "false":
-                    return False
-            return val
-        except:
+            return float(value)
+        except ValueError:
             pass
+    else:
+        try:
+            return int(value)
+        except ValueError:
+            pass
+
+    return value
 
 
 def parse_config(config_file="uwl.config"):
     parser = ConfigParser()
     parser.read(config_file)
     return parser
+
 
 def dir_exists(dir):
     return os.path.exists(dir) and os.path.isdir(dir)
