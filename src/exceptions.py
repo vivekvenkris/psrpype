@@ -1,16 +1,20 @@
+from log import Logger
+
+class BaseException(Exception):
+     def __init__(self, message):
+        self.logger = Logger.getInstance()
+        self.logger.fatal(message)
 
 
-class IncorrectFileHeaderException(Exception):
-    def __init__(self, message=None, filename=None):
+class ConfigurationException(BaseException):
+    def __init__(self, message="Incorrect inputs in config file"):
+        super().__init__(message)
 
-    	 if message is None:
-    	 	if filename is not None:
-    			self.message = "Incorrect header for file: " + filename
-    		else:
-                self.message = "Incorrect header in input file"
-            
-        else:
-        	
-            self.message = message
+class IncorrectStatusException(BaseException):
+    def __init__(self, message="Incorrect processing status"):
+        super().__init__(message)
 
-        super().__init__(self.message)
+
+class IncorrectInputsException(BaseException):
+    def __init__(self, message="Incorrect arguments provided"):
+        super().__init__(message)
