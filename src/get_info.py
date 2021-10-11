@@ -64,6 +64,7 @@ if __name__ == "__main__":
 	info.append("#rawfile")
 	info.append("source")
 	info.append("start_mjd")
+	info.append("end_mjd")
 	info.append("nchan")
 	info.append("nsubint")
 	info.append("npol")
@@ -85,7 +86,8 @@ if __name__ == "__main__":
 		info=[]
 		info.append(os.path.abspath(file))
 		info.append(ar.get_source())
-		info.append(ar.start_time().printall())
+		info.append(ar.start_time().in_days())
+		info.append(ar.end_time().in_days())
 		info.append(str(ar.get_nchan()))
 		info.append(str(ar.get_nsubint()))
 		info.append(str(ar.get_npol()))
