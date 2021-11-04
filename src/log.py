@@ -3,6 +3,7 @@ import logging
 import logging.handlers
 import os, datetime
 from pathlib import Path
+import datetime
 
 BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE = range(8)
 RESET_SEQ = "\033[0m"
@@ -38,7 +39,7 @@ class Logger(object):
 	def getInstance(args = None):
 		""" Static access method. """
 		if Logger.__instance is None:
-			__instance = Logger(args)
+			Logger.__instance = Logger(args)
 		return Logger.__instance.logger
 
 	def __init__(self, args):
@@ -48,15 +49,16 @@ class Logger(object):
 		else:
 			Logger.__instance = self
 		logger = logging.getLogger("logger") 
-		logger.propagate = False
+		logger.setLevel('DEBUG')
+		logger.propagate = True
 
 
 		if args.log_to_file:
 
-			print("started logging to file",args.file_log_level, args.stream_log_level, logging.getLevelName(args.file_log_level), logging.getLevelName(args.stream_log_level))
+			print("started logging to file", args.file_log_level, args.stream_log_level, logging.getLevelName(args.file_log_level), logging.getLevelName(args.stream_log_level))
 
 			file_name = args.log_file
-			if args.log_file is "timestamp" or args.log_file is None:
+			if args.log_file is None or args.log_file == "timestamp":
 				file_name = "{}.log".format(datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S").replace("T","-"))
 
 			file_handler = logging.FileHandler(file_name)
