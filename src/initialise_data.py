@@ -2,33 +2,31 @@ import glob, argparse, datetime, sys
 import numpy as np
 from pathlib import Path, PurePath
 import psrchive as ps
-from astropy.time import Time
 from log import Logger
 import numpy.lib.recfunctions as rfn
+from config_parser import ConfigurationReader
+from db_orms import DBManager, Collection, Observation
+from gen_utils import get_utc_string
 
 TIMES_FILE="times.dat"
 TOLERANCE=0.00010 # < 10 seconds in MJD
 
 
 def get_args():
-	argparser = argparse.ArgumentParser(description="Generate usual directory structure by symlinking files downloaded from DAP", 
+	argparser = argparse.ArgumentParser(description="Add new DAP data to DB", 
 		formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-
-	required_group = argparser.add_argument_group('Required arguments')
-	required_group.add_argument("-o", "--out_directory", dest="out_dir", help="output directory", required=True)
-	required_group.add_argument("-p", "--pid", dest="pid", help="Project ID", required=True)
-
 
 	mutually_exclusive = argparser.add_argument_group('Mutually exclusive arguments')
 
 	group = mutually_exclusive.add_mutually_exclusive_group(required=True)
-	group.add_argument("-d", "--dirs", dest="dirs", help="directories to get files from", nargs='+', default=argparse.SUPPRESS)
-	group.add_argument("-f", "--files", dest="file_list", help="list of files", nargs='+', default=argparse.SUPPRESS)
+	group.add_argument("-d", dest="dirs", help="comma separated list of PID DIR ALT_NAME", default=argparse.SUPPRESS)
+	group.add_argument("--dir_list", dest="dir_list", help="a list file containing PID DIR ALT_NAME per line", default=argparse.SUPPRESS)
 
 	argparser.add_argument("-e", "--extensions", dest="extensions", help="comma separated extensions of archive files to use", default=".ar,.cf,.rf,.zcf,.zrf")
 	argparser.add_argument("-b", "--backends", dest="backends", help="comma separated backends list to process, (default: ALL)")
 	argparser.add_argument("-s", "--sources", dest="sources", help="comma separated sources list to process, (default: ALL)")
 	argparser.add_argument("-c", "--centre_frequencies", dest="frequencies", help="comma separated centre frequencies list to process, (default: ALL)")
+	argparser.add_argument("--config", dest="config", help="config file", required=True)
 
 	Logger.add_logger_argparse_options(argparser)
 
@@ -46,6 +44,7 @@ class FileInfo(object):
 		self._cfreq =  archive.get_centre_frequency()
 		self._start_mjd = archive.start_time().in_days()
 		self._end_mjd = archive.end_time().in_days()
+		self._observation = Observation(archive)
 
 	@property
 	def file_name(self):
@@ -71,6 +70,10 @@ class FileInfo(object):
 	def end_mjd(self):
 		return self._end_mjd
 
+	@property
+	def observation(self):
+		return self._observation		
+
 	def __repr__(self):
 		return self.__str__()
 
@@ -81,25 +84,28 @@ class FileInfo(object):
 def get_file_infos(file_list, backends, sources, frequencies):
 	logger = Logger.getInstance()
 	file_infos = []
+	float_freqencies = np.array(frequencies, dtype=np.float)
+
 	for file in file_list:
 		ar = ps.Archive_load(file)
 
 		if(backends is not None and ar.get_backend_name() not in backends):
-			logger.debug("skipping " + file + " as not in backends list")
+			logger.debug("skipping {} as {} is not in backends list".format(ar.get_filename(),ar.get_backend_name() ))
 			continue
 
-		if(sources is not None and ar.get_source_name() not in sources):
-			logger.debug("skipping " + file + " as not in sources list")
+		if(sources is not None and ar.get_source() not in sources):
+			logger.debug("skipping {} as {} is not in sources list".format(ar.get_filename(),ar.get_source() ))
 			continue
 
-		if(frequencies is not None and ar.get_centre_frequency() not in frequencies):
-			logger.debug("skipping " + file + " as not in cenre frequencies list")
+		if(frequencies is not None and not np.any(np.isclose(ar.get_centre_frequency(),float_freqencies))):
+			logger.debug("skipping {} as {} is not in centre freq list".format(ar.get_filename(),ar.get_centre_frequency() ))			
 			continue	
 
-		file_info = FileInfo(file, ar)
-		file_infos.append(file_info)
-		del ar
+		file_infos.append(FileInfo(file, ar))
+		logger.debug("adding {} {} {}".format(ar.get_source(),ar.get_backend_name(),ar.get_centre_frequency()))
 
+		del ar
+	logger.debug("{} files added".format(len(file_infos)))
 	return file_infos
 
 
@@ -112,45 +118,60 @@ def get_times_for_cfreq(file_name, cfreq):
 
 
 def main():
-	np.set_printoptions(precision=8)
 
+	# get arguments, and with that initialise the logger, and obtain the config file and the DB session
 	args = get_args()
 	logger = Logger.getInstance(args)
+	config = ConfigurationReader(args.config).get_config()
+	db_manager = DBManager.get_instance(config.db_file)
+	session = db_manager.get_session()
 
-	directories = args.dirs if args.dirs is not None else ['standalone']
-	in_dir_paths = [Path(x) for x in directories]
+	#get pid_list, dap_id_list, alt_name_list from input
+	pid_list, dap_id_list, alt_name_list  = None, None, None
 
-	# bork if any of the directories do not exist, ignore standalone processing
+	if hasattr(args, 'dir_list'):
+		dir_list_arr = np.loadtxt(args.dir_list, 
+			dtype={'names': ('pid', 'dir', 'alt_name'),
+			'formats': ('S128','S128', 'S128')})
+		pid_list = [x.decode() for x in dir_list_arr['pid']]
+		dap_id_list = [x.decode() for x in dir_list_arr['dir']]
+		alt_name_list = [x.decode() for x in dir_list_arr['alt_name']]
+	else:
+		dir_list_arr = np.array([x.split() for x in  args.dirs.split(",")])
+		pid_list =  dir_list_arr[:,0]
+		dap_id_list = dir_list_arr[:,1]
+		alt_name_list = dir_list_arr[:,2]
+
+
+
+	in_dir_paths = [Path(x) for x in dap_id_list]
+
+	# bork if any of the directories do not exist
 	for in_dir_path in in_dir_paths:
-		if not in_dir_path.exists() and in_dir_path.name is not 'standalone':
-			logger.fatal(msg="Directory does not exist:" + args.dir)
+		if not in_dir_path.exists():
+			logger.fatal(msg="Directory does not exist:" + in_dir_path.resolve().as_posix())
 			sys.exit(1)
 
 	# create the output directory if it does not exist
-	out_dir = Path(args.out_dir)
-	out_dir.mkdir(exist_ok=True)
+	out_dir = Path(config.root_dir).joinpath('rawdata')
+	out_dir.mkdir(parents=True, exist_ok=True)
 
+	#get the things to shortlist by
 	backends = args.backends.split(",") if args.backends is not None else None
 	sources = args.sources.split(",") if args.sources is not None else None
 	frequencies = args.frequencies.split(",") if args.frequencies is not None else None 
 
 
-	for in_dir_path in in_dir_paths:
+	for in_dir_path, dap_id, pid, alt_name in zip(in_dir_paths, dap_id_list, pid_list, alt_name_list):
 
 		dap_dir= in_dir_path.name
 
 		file_list = []
 
-
-		if in_dir_path.name is not "standalone": 
-
-			for ext in args.extensions.split(","):
-				d = bytes(in_dir_path.resolve()).decode()
-				logger.debug("looking for " + d + "/*"+ ext)
-				file_list.extend(glob.glob(d + "/*"+ ext)) 
-
-		else:
-			file_list = args.file_list
+		for ext in args.extensions.split(","):
+			d = in_dir_path.resolve().as_posix()
+			logger.debug("looking for " + d + "/*"+ ext)
+			file_list.extend(glob.glob(d + "/*"+ ext)) 
 
 		#Get file infos and sort by start time. 
 		file_infos=get_file_infos(file_list, backends, sources, frequencies)
@@ -159,18 +180,20 @@ def main():
 
 
 
+		collection = Collection(collection_name = dap_dir, name_alias = alt_name, pid=pid, collection_path=in_dir_path.resolve().as_posix())
+
 		for file_info in file_infos:
-			logger.debug("considering", file_info.file_name)
+			logger.debug("considering {}".format(file_info.file_name))
 
 			file_path = Path(file_info.file_name)
 			file_ext = "".join(file_path.suffixes)
 
 
-			dap_path = out_dir.joinpath(args.pid).joinpath(file_info.source).joinpath(dap_dir)
+			dap_path = out_dir.joinpath(pid).joinpath(file_info.source).joinpath(dap_dir+"_"+alt_name)
 			dap_path.mkdir(parents=True, exist_ok=True)
 
-			utc_start = Time(file_info.start_mjd,format="mjd", scale="utc").isot.replace("T","-").split(".")[0]
-			utc_end   = Time(file_info.end_mjd  ,format="mjd", scale="utc").isot.replace("T","-").split(".")[0]
+			utc_start = get_utc_string(file_info.start_mjd) 
+			utc_end   = get_utc_string(file_info.end_mjd)
 
 			utc_dir = utc_start
 
@@ -187,7 +210,7 @@ def main():
 
 					#if the files are the same - .rf vs .zrf, look if there are already UTCs with the same name
 					if times_for_cfreq[ times_for_cfreq['utc_dir'] == utc_dir.encode() ].size is not 0:
-						logger.info("Using existing utc_start=utc_dir for" + utc_start)
+						logger.info("Using existing utc_start=utc_dir for {}".format(utc_start))
 
 
 					else:
@@ -203,7 +226,7 @@ def main():
 
 			with open(times_file_path,'a') as f:
 				line="{:8.3f} {:20.12f} {} {:20.12f} {} {}\n".format(file_info.cfreq, file_info.start_mjd, utc_start, file_info.end_mjd, utc_end,  utc_dir)
-				logger.debug("writing to times.dat: ", line)
+				logger.debug("writing to times.dat: {}".format(line))
 				f.write(line)
 
 
@@ -213,8 +236,19 @@ def main():
 			new_file_path = new_path.joinpath(utc_start + file_ext)
 			if not new_file_path.exists():
 				new_file_path.symlink_to(file_path)
+				observation = file_info.observation
+				observation.sym_file = new_file_path.absolute().as_posix()
+				observation.original_file = file_path.resolve().as_posix()
+				observation.obs_start_utc = utc_dir
+				collection.observations.append(observation)
 			else:
-				logger.warn(bytes(new_file_path).decode() + "already exists, skipping...")    
+				logger.warn("{} already exists, skipping...".format(new_file_path.resolve().as_posix() ))    
+
+		session.add(collection)
+
+	session.commit()
+	print("All Done")
+
 
 
  
