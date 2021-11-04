@@ -4,14 +4,27 @@ import subprocess
 import shlex
 from subprocess import call, PIPE, STDOUT
 from errno import ENOENT
-
+from log import Logger
+import time
+from astropy.time import Time
+import datetime
+import threading
 
 def get_nearest_even_number(number_int):
         return number_int if int(number_int) % 2 == 0 else number_int-1
 
+def get_utc_string(mjd):
+    return Time(mjd,format="mjd", scale="utc").isot.replace("T","-").split(".")[0]
+
+def split_and_strip(string, split_on):
+    x = string.strip().split(split_on)
+    x = [y.strip() for y in x]
+    return x
+
 
 def strip_quotes_and_spaces(value):
-    return value.replace("\"","").strip("\\s+")   
+    return value.replace("\"","").strip()   
+
 
 def guess_and_change_dtype(value):
 
@@ -28,6 +41,9 @@ def guess_and_change_dtype(value):
             pass
 
     return value
+
+def get_current_timestamp_String():
+    return datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S").replace("T","-")
 
 
 def parse_config(config_file="uwl.config"):
@@ -103,4 +119,65 @@ def write_array_pretty(file_name, array, logger):
     with  open(file_name, 'w') as f:
         f.write(text_to_save)
 
+class SubProcessRunner(threading.Thread):
+
+    def __init__(self, command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT):
+        self.stdout = stdout
+        self.stderr = stderr
+        self.command = command
+        self.logger = Logger.getInstance()
+        self.proc = None
+        threading.Thread.__init__(self)    
+
+    def run(self):
+        command_chunks = self.command.split()
+        self.logger.info("\n RUNNING COMMAND: {}\n".format(self.command))
+        time_start = time.time()
+
+        self.proc = subprocess.Popen(command_chunks, stdout=self.stdout, stderr=self.stderr, env = os.environ.copy())
+        self.stdout, self.stderr = self.proc.communicate()  #Wait for the process to complete      
+
+        time_end = time.time()
+
+        self.logger.info("TOTAL TIME TAKEN: %d s\n" % (time_end - time_start))
+
+
+
+
+def run_process(command):
+        logger = Logger.getInstance()
+        subprocess_runner = SubProcessRunner(command)
+        subprocess_runner.start()
+        subprocess_runner.join()
+
+        if subprocess_runner.proc.returncode:
+            logger.fatal(subprocess_runner.stdout.decode())
+        else:
+            logger.info(subprocess_runner.stdout.decode())
+
+        return subprocess_runner.stdout.decode()
+
+
+# def run_process(command):
+
+#         logger = Logger.getInstance()
+
+#         command_chunks = command.split()
+
+#         time_start = time.time()
+
+#         logger.info("\n RUNNING COMMAND: {}\n".format(command))
+#         proc = subprocess.Popen(command_chunks, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env = os.environ.copy())
+#         output = proc.communicate()  #Wait for the process to complete      
+
+#         if proc.returncode:
+#             logger.fatal(output[0].decode())
+#         else:
+#             logger.info(output[0].decode())
+
+#         time_end = time.time()
+
+#         logger.info("TOTAL TIME TAKEN: %d s\n" % (time_end - time_start))
+
+#         return output[0].decode()
 
