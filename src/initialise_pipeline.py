@@ -7,6 +7,7 @@ from config_parser import ConfigurationReader
 import traceback
 import os 
 from db_orms import DBManager
+from exceptions import IncorrectInputsException
 def get_args():
     argparser = argparse.ArgumentParser(description="Initialise pipeline")
     argparser.add_argument("-d", "--pipeline_root_dir", dest="pipeline_root_dir", help="Directory to place processed output", required=True)
@@ -28,19 +29,28 @@ if __name__ == "__main__":
     out_path=Path(args.pipeline_root_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
+    # open an empty database
+    db_path = out_path.joinpath("psrpype.sqlite3")
+
+    if db_path.exists():
+        raise IncorrectInputsException("DB already exists here: {} ".format(out_path.resolve().as_posix()))
+
+    for d in PIPELINE_DIR_NAMES:
+        out_path.joinpath(d).mkdir(parents=True, exist_ok=True) 
+
     # write a default config file
     ConfigurationReader.init_default(out_path)
 
-    # open an empty database
-    db_path = out_path.joinpath("psrpype.db")
+    db_manager = DBManager.get_instance(db_path)
 
-    if db_path.exists():
-        raise IncorrectInputsException("{} Ledger already exists here: ".format(out_path.resolve().decode()))
-
-    for d in PIPELINE_DIR_NAMES:
-        Path().joinpath(d).mkdir(parents=True, exist_ok=True) 
-
-    DBManager.init_db(db_path)
+    db_manager.init_database()
 
 
-    logger.info("done")
+
+   #session = db_manager.start_session()
+
+
+
+
+    logger.info("Pipeline initialised in {}".format(out_path.resolve().as_posix()))
+
