@@ -60,9 +60,9 @@ def file_exists(file):
     return os.path.exists(file) and os.path.isfile(file)
 
 
-def log_subprocess_output(pipe):
+def log_subprocess_output(pipe, logger):
     for line in iter(pipe.readline, b''): # b'\n'-separated lines
-        logging.info('got line from subprocess: %r', line)
+        logger.info('got line from subprocess: %r', line)
 
 
 def run_subprocess(str_id, cmd_string, logger):
@@ -119,13 +119,13 @@ def write_array_pretty(file_name, array, logger):
     with  open(file_name, 'w') as f:
         f.write(text_to_save)
 
-class SubProcessRunner(threading.Thread):
+class SubProcessRunner(object):
 
     def __init__(self, command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT):
         self.stdout = stdout
         self.stderr = stderr
         self.command = command
-        self.logger = Logger.getInstance()
+        self.logger = Logger.get_instance()
         self.proc = None
         threading.Thread.__init__(self)    
 
@@ -145,10 +145,9 @@ class SubProcessRunner(threading.Thread):
 
 
 def run_process(command):
-        logger = Logger.getInstance()
+        logger = Logger.get_instance()
         subprocess_runner = SubProcessRunner(command)
-        subprocess_runner.start()
-        subprocess_runner.join()
+        subprocess_runner.run()
 
         if subprocess_runner.proc.returncode:
             logger.fatal(subprocess_runner.stdout.decode())
