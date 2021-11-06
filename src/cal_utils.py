@@ -9,11 +9,11 @@ class CalUtils(object):
 		self.config = config
 		self.global_fluxcal_db = config.global_fluxcal_db
 		self.global_polncal_db = config.global_polncal_db
-		self.logger = Logger.getInstance()
+		self.logger = Logger.get_instance()
 
 
 	def add_to_db(self, global_db, local_db):
-		
+		self.logger.debug("Adding {} to {}".format(local_db, global_db))
 		#Read local DB 
 		local_db_lines = open(local_db).read().splitlines()
 		shortlisted_local_db_lines = [l for l in  local_db_lines if "Pulsar::Database" not in l ]
@@ -27,12 +27,14 @@ class CalUtils(object):
 		global_db_lines = open(global_db).read().splitlines()
 		shortlisted_local_db_lines = [l for l in shortlisted_local_db_lines if l not in global_db_lines]		
 
+		# if there are new lines, add them to global DB
 		if len(shortlisted_local_db_lines) != 0:
 
 			self.logger.info("Adding {} lines from {} to {}".format(len(shortlisted_local_db_lines), local_db, global_db))
 
 			with open(global_db, 'a') as f:
 				f.write('\n'.join(shortlisted_local_db_lines))
+				f.write('\n') #new line so the next write does not start on the same line
 
 		else:
 			self.logger.warn("No new lines to add from {} to {}".format(local_db, global_db))
@@ -50,6 +52,7 @@ class CalUtils(object):
 		out_dir_path = self.config.root_dir_path.joinpath(FLUXCAL_SOLUTIONS_DIR)
 		out_dir_path.mkdir(exist_ok=True, parents=True)
 		command = "fluxcal -K 3.0 -d {} -O {}".format(local_db_file,out_dir_path.resolve().as_posix())
+		self.logger.debug("Running command: {}".format(command))
 		run_process(command)
 
 
@@ -69,22 +72,12 @@ class CalUtils(object):
 		
 		command = ("pac -K 3.0 -W {} -k {}"
 					.format(list_file_path.resolve().as_posix(), db_name))
-
+		self.logger.debug("Running command: {}".format(command))
 		run_process(command)
 		return db_name
 
 
-	def fix_cal_type(self, observation):
 
-		if observation.is_flux_cal() and "FluxCal" not in observation.obs_type : 
-		
-			obs_type = "FluxCal-On" if "_O" in observation.source else "FluxCal-Off"
-
-			command = "psredit -c type={} -m {}".format(obs_type, observation.original_file)
-
-			observation.obs_type = obs_type
-
-			run_process(command)
 
 
 
