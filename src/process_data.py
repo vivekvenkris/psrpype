@@ -1,24 +1,34 @@
-import glob, argparse, datetime, sys
-import numpy as np
+import argparse
+import datetime
+import glob
+import sys
+import time
+from itertools import groupby
 from pathlib import Path, PurePath
+
+import clfd
+import numpy as np
+import numpy.lib.recfunctions as rfn
 import psrchive as ps
 from astropy.time import Time
-from log import Logger
-import numpy.lib.recfunctions as rfn
-from config_parser import ConfigurationReader
-from db_orms import DBManager, Collection, Observation
-from sqlalchemy import select
-from gen_utils import split_and_strip,run_process,get_current_timestamp_String
-import clfd
 from clfd.interfaces import PsrchiveInterface
-from rfi_utils import *
-from constants import FLUX_CALIBRATOR_SOURCES, FLUXCAL_DIR, FLUXCAL_CLEANED_DIR, PULSAR_TYPES, SCRATCH_DIR
-from cal_utils import CalUtils
-from processor import Processor
+from sqlalchemy import select
+
 from app_utils import AppUtils
-from itertools import groupby
+from cal_utils import CalUtils
+from config_parser import ConfigurationReader
+from constants import (FLUX_CALIBRATOR_SOURCES, FLUXCAL_CLEANED_DIR,
+					   FLUXCAL_DIR, PULSAR_TYPES, SCRATCH_DIR)
+from db_orms import Collection, DBManager, ObservationChunk
+from gen_utils import (get_current_timestamp_String, run_process,
+					   split_and_strip)
+from log import Logger
+from processor import Processor
+from rfi_utils import *
+from session import ObservingSession
 from slurm import Slurm
-import time
+
+
 def get_args():
 	argparser = argparse.ArgumentParser(description="process pulsar data", 
 		formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -38,33 +48,30 @@ def main():
 
 	# get arguments, and with that initialise the logger, and obtain the config file and the DB session
 	args = get_args()
-	logger = Logger.getInstance(args)
+	logger = Logger.get_instance(args)
 	config = ConfigurationReader(args.config).get_config()
 	db_manager = DBManager.get_instance(config.db_file)
-	session = db_manager.get_session()
 
 
-	query = session.query(Observation)
-	query = query.filter(Observation.obs_type.in_(PULSAR_TYPES))	
+	# get the list of observations to process
+	query = db_manager.get_session().query(Observation)
+	query = query.filter(Observation.obs_type.in_(PULSAR_TYPES))
+	query = query.filter(Observation.processed == False)
 	query = AppUtils.add_shortlist_filters(query, args)
-	#query.filter(Observation.cleaned_file.isnot(None))
 
-	observations = query.all()
+	observations = query.all()	
+
+
 
 	slurm = Slurm(config)
 
 
-	observations = [x for x in observations if x.recleaned_file is None]
-	print(observations)
-	print(args)
-
 	if args.slurm: 
-		obs_groups = [list(g[1]) for g in groupby(observations, lambda o: o.obs_start_utc)]
-
-		for group in obs_groups:
+		
+		for observation in observations:
 
 			biggest_size=0
-			for o in group:			
+			for o in observation.observation_chunks:			
 				biggest_size = o.file_size if o.file_size > biggest_size else biggest_size
 				
 
@@ -77,16 +84,18 @@ def main():
 			else:
 				wall_time="24:00:00"
 
-			command = "python {} --config={} --obs_utcs=\"{}\" --stream_log_level=DEBUG".format(Path(__file__).resolve().as_posix(),args.config, group[0].obs_start_utc)
-			job_id = slurm.run(group[0].source, group[0].obs_start_utc, command, memory, ncpus, wall_time)
+			command = "python {} --config={} --obs_utcs=\"{}\" --stream_log_level=DEBUG".format(Path(__file__).resolve().as_posix(),
+																								Path(args.config).resolve().as_posix(), 
+							observation.obs_start_utc)
+			job_id = slurm.launch(
+				observation.source, observation.obs_start_utc, command, memory, ncpus, wall_time)
 			time.sleep(2)
 
-			slurm_job = SlurmJob(id=job_id, state="queued")
-			session.add(slurm_job)
-			for o in group:
-				o.slurm_job = slurm_job
-				session.add(o)
-			session.commit()
+			slurm_job = SlurmJob(id=job_id, state="QUEUED")
+			db_manager.get_session().add(slurm_job)
+			observation.slurm_job = slurm_job
+			db_manager.get_session().add(observation)
+			db_manager.get_session().commit()
 
 		logger.info("All jobs submitted..")
 
@@ -94,22 +103,11 @@ def main():
 	else:
 
 		for observation in observations:
+			observing_session = ObservingSession(config, observation)
+			observing_session.process() 
+			observation.processed = True
+			db_manager.add_to_db(observation)
 
-			logger.debug("considering {}".format(observation))
-
-			processor = Processor(config, observation)
-
-			processor.preprocess()
-
-			processor.clean()
-
-			processor.calibrate()
-
-			processor.reclean()
-
-			processor.decimate()
-
-			#processor.time()
  
 if __name__ == "__main__":
 	main()
