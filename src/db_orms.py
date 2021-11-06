@@ -5,6 +5,8 @@ from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 import sqlalchemy
 from pathlib import Path
+
+from sqlalchemy.sql.sqltypes import Boolean
 from log import Logger
 from gen_utils import get_utc_string
 from constants import FLUX_CALIBRATOR_SOURCES, FLUXCAL_DIR, POLNCAL_DIR, PULSAR_DIR, SCRATCH_DIR
@@ -22,7 +24,8 @@ class Collection(Base):
 	collection_path = Column(String, nullable=False)
 	pid = Column(String, nullable=False)
 	description = Column(String)
-	observations = relationship("Observation", back_populates="collection")
+	observation_chunks = relationship(
+		"ObservationChunk", back_populates="collection")
 	name_alias = Column(String, nullable=False)
 
 	def __repr__(self):
@@ -37,9 +40,59 @@ class SlurmJob(Base):
 	state = Column(String, nullable=False)
 	description = Column(String)
 
-
 class Observation(Base):
 	__tablename__="observations"
+	id = Column(Integer, primary_key=True)
+
+	slurm_id = Column(Integer, ForeignKey('slurm_jobs.id'))
+	slurm_job = relationship("SlurmJob")
+
+	observation_chunks = relationship(
+		"ObservationChunk", back_populates="observation")
+
+	obs_start_utc = Column(String, nullable=False)
+	obs_type = Column(String, nullable=False)
+	nchan = Column(Integer, nullable=False)	
+	nsubint = Column(Integer, nullable=False)
+	nbin = Column(Integer, nullable=False) 
+	npol = Column(Integer, nullable=False)
+	cfreq = Column(Float, nullable=False)
+	bw = Column(Float, nullable=False)
+	source = Column(String, nullable=False)
+	cfreq = Column(Float, nullable=False)
+	backend = Column(String, nullable=False)
+	telescope = Column(String, nullable=False)	
+	psradded_file = Column(String)
+	decimated = Column(Boolean, nullable=False, default=False)
+	processed = Column(Boolean, nullable=False, default=False)
+
+	def __init__(self, observation_chunks):
+		self.observation_chunks = observation_chunks
+		observation_chunk = observation_chunks[0]
+		self.nchan = observation_chunk.nchan
+		self.nsubint = observation_chunk.nsubint
+		self.nbin = observation_chunk.nbin
+		self.npol = observation_chunk.npol
+		self.cfreq = observation_chunk.cfreq
+		self.bw = observation_chunk.bw
+		self.source = observation_chunk.source
+		self.cfreq = observation_chunk.cfreq
+		self.backend = observation_chunk.backend
+		self.telescope = observation_chunk.telescope
+		self.obs_start_utc = observation_chunk.obs_start_utc
+		self.obs_type = observation_chunk.obs_type
+		
+	def is_flux_cal(self):
+		return self.source in FLUX_CALIBRATOR_SOURCES
+
+	def is_poln_cal(self):
+		return self.source not in FLUX_CALIBRATOR_SOURCES and self.obs_type == 'PolnCal'
+
+	def is_pulsar(self):
+		return self.obs_type == 'Pulsar'
+
+class ObservationChunk(Base):
+	__tablename__="observation_chunks"
 
 	id = Column(Integer, primary_key=True)
 
@@ -61,6 +114,7 @@ class Observation(Base):
 	obs_type = Column(String, nullable=False)
 	original_file = Column(String, nullable=False)
 	sym_file = Column(String, nullable=False)
+	processed = Column(Boolean, nullable=False, default=False)
 	preprocessed_file = Column(String)
 	cleaned_file = Column(String)
 	calibrated_file = Column(String)
@@ -83,12 +137,14 @@ class Observation(Base):
 		self.obs_start_utc = obs_start_utc
 		self.original_file = original_file_path.resolve().as_posix() if original_file_path is not None else None
 		self.sym_file = sym_file_path.resolve().as_posix() if sym_file_path is not None else None
-
+		
 	collection_id = Column(Integer, ForeignKey('collections.id'), nullable=False)
 	collection = relationship("Collection")
 
-	slurm_id = Column(Integer, ForeignKey('slurm_jobs.id'))
-	slurm_job = relationship("SlurmJob")
+	observation_id = Column(Integer, ForeignKey('observations.id'), nullable=False)
+	observation = relationship("Observation")
+
+
 
 	def __repr__(self):
 		return "<Observation (source = {},start_utc={}, original_file = {}, type= {})>\n".format(self.source, self.obs_start_utc, self.original_file, self.obs_type)
@@ -145,7 +201,7 @@ class DBManager(object):
 
 	@staticmethod
 	def get_instance(db_path = None):
-		logger = Logger.getInstance()
+		logger = Logger.get_instance()
 
 		""" Static access method. """
 		if DBManager.__instance is None:
@@ -168,10 +224,10 @@ class DBManager(object):
 		db_path = db_path.resolve().as_posix()
 		open(db_path, 'a').close()
 
-		self.logger = Logger.getInstance()
+		self.logger = Logger.get_instance()
 		self.logger.debug("Opening {} ".format(db_path ))
 
-		self._engine = create_engine('sqlite+pysqlite:////{}'.format(db_path), echo=False, future=True)
+		self._engine = create_engine('sqlite+pysqlite:////{}'.format(db_path), echo=False, future=True, connect_args={'timeout': 600})
 		self._Session = sessionmaker(bind=self._engine)	
 		self._current_session = None
 		
@@ -191,7 +247,6 @@ class DBManager(object):
 
 		session.commit()
 
-
 	def get_session(self):
 		if self._current_session is None:
 			self.start_session()
@@ -204,10 +259,12 @@ class DBManager(object):
 
 	def close_session(self):
 		self._current_session.close()
+		self._current_session = None
 
 	def __del__(self):
 		if self._current_session is not None:
 			self.close_session()
+
 
 
 
