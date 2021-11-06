@@ -1,9 +1,9 @@
 import atexit
+import datetime
 import logging
 import logging.handlers
-import os, datetime
+import os
 from pathlib import Path
-import datetime
 
 BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE = range(8)
 RESET_SEQ = "\033[0m"
@@ -36,11 +36,15 @@ class Logger(object):
 
 	__instance = None
 	@staticmethod
-	def getInstance(args = None):
+	def get_instance(args = None):
 		""" Static access method. """
 		if Logger.__instance is None:
 			Logger.__instance = Logger(args)
 		return Logger.__instance.logger
+
+	def share_handlers_with(self, logger):
+		for handler in self.logger.handlers:
+			logger.addHandler(handler)
 
 	def __init__(self, args):
 		""" Virtually private constructor. """
