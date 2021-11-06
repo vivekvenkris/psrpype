@@ -13,27 +13,26 @@ class SlurmConfig(object):
 		self._mail_type = mail_type
 		self._mail_user = mail_user
 		self._bash_setup = bash_setup
-
 	@property
 	def num_simultaneous_jobs(self):
 		return self._num_simultaneous_jobs
-
+	
 	@property
 	def partition(self):
 		return self._partition
-
+	
 	@property
-	def mail_type(self):
+	def mail_type(self):	
 		return self._mail_type
-
+	
 	@property
 	def mail_user(self):
 		return self._mail_user
-
+	
 	@property
 	def bash_setup(self):
 		return self._bash_setup
-
+	
 	def __str__(self):
 		return " num_simultaneous_jobs {} \n partition {} \n mail_user {}  \n mail_type {} \n".format(self.num_simultaneous_jobs, self.partition, self.mail_user, self.mail_type)
 
@@ -55,7 +54,7 @@ class Config(object):
 		self._global_polncal_db = global_polncal_db
 		self._global_metm_db = global_metm_db
 		self._rfi_tolerance = rfi_tolerance
-		self.logger = Logger.getInstance()
+		self.logger = Logger.get_instance()
 
 		self.dms={}
 		self.rms={}
@@ -76,7 +75,7 @@ class Config(object):
 					continue		
 				self.dms[chunks[0]] = chunks[1]
 		else:
-			logger.warn("DM list not found here: {}".split(dm_file_path.resolve().as_posix()))
+			self.logger.warn("DM list not found here: {}".split(dm_file_path.resolve().as_posix()))
 
 
 		rm_file_path = Path(rm_file)
@@ -92,7 +91,7 @@ class Config(object):
 					continue
 				self.rms[chunks[0]] = chunks[1]
 		else:
-			logger.warn("RM list not found here: {}".split(rm_file_path.resolve().as_posix()))		
+			self.logger.warn("RM list not found here: {}".split(rm_file_path.resolve().as_posix()))		
 
 
 		decimation_file_path = Path(decimation_file)
@@ -266,7 +265,7 @@ class ConfigurationReader(object):
 
 
 	def get_config(self):
-		return self._config;
+		return self._config
 
 
 

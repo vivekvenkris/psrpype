@@ -23,7 +23,7 @@ if __name__ == "__main__":
     args = get_args()
 
     #initialise logger
-    logger = Logger.getInstance(args)
+    logger = Logger.get_instance(args)
 
     #make the output directory
     out_path=Path(args.pipeline_root_dir)

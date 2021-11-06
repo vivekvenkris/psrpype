@@ -5,8 +5,9 @@ import psrchive as ps
 from log import Logger
 import numpy.lib.recfunctions as rfn
 from config_parser import ConfigurationReader
-from db_orms import DBManager, Collection, Observation
+from db_orms import DBManager, Collection, Observation, ObservationChunk
 from gen_utils import get_utc_string
+from itertools import groupby
 
 TIMES_FILE="times.dat"
 TOLERANCE=0.00010 # < 10 seconds in MJD
@@ -44,7 +45,7 @@ class FileInfo(object):
 		self._cfreq =  archive.get_centre_frequency()
 		self._start_mjd = archive.start_time().in_days()
 		self._end_mjd = archive.end_time().in_days()
-		self._observation = Observation(archive)
+		self._observation_chunk = ObservationChunk(archive)
 
 	@property
 	def file_name(self):
@@ -71,8 +72,8 @@ class FileInfo(object):
 		return self._end_mjd
 
 	@property
-	def observation(self):
-		return self._observation		
+	def observation_chunk(self):
+		return self._observation_chunk		
 
 	def __repr__(self):
 		return self.__str__()
@@ -82,7 +83,7 @@ class FileInfo(object):
 
 
 def get_file_infos(file_list, backends, sources, frequencies):
-	logger = Logger.getInstance()
+	logger = Logger.get_instance()
 	file_infos = []
 	float_freqencies = np.array(frequencies, dtype=np.float)
 
@@ -121,7 +122,7 @@ def main():
 
 	# get arguments, and with that initialise the logger, and obtain the config file and the DB session
 	args = get_args()
-	logger = Logger.getInstance(args)
+	logger = Logger.get_instance(args)
 	config = ConfigurationReader(args.config).get_config()
 	db_manager = DBManager.get_instance(config.db_file)
 	session = db_manager.get_session()
@@ -236,15 +237,22 @@ def main():
 			new_file_path = new_path.joinpath(utc_start + file_ext)
 			if not new_file_path.exists():
 				new_file_path.symlink_to(file_path)
-				observation = file_info.observation
-				observation.sym_file = new_file_path.absolute().as_posix()
-				observation.original_file = file_path.resolve().as_posix()
-				observation.obs_start_utc = utc_dir
-				collection.observations.append(observation)
+				observation_chunk = file_info.observation_chunk
+				observation_chunk.sym_file = new_file_path.absolute().as_posix()
+				observation_chunk.original_file = file_path.resolve().as_posix()
+				observation_chunk.obs_start_utc = utc_dir
+				collection.observation_chunks.append(observation_chunk)
 			else:
 				logger.warn("{} already exists, skipping...".format(new_file_path.resolve().as_posix() ))    
 
 		session.add(collection)
+
+		# group observation chunks by start utc and add it to observations table
+		for group in [list(g[1]) for g in groupby(collection.observation_chunks, lambda o: o.obs_start_utc)]:
+			observation = Observation(group)
+			session.add(observation)
+		session.commit()
+
 
 	session.commit()
 	print("All Done")
