@@ -1,0 +1,5 @@
+astropy==4.3.1
+clfd==0.3.3
+numpy==1.21.4
+SQLAlchemy==1.4.25
+utils==1.0.1
