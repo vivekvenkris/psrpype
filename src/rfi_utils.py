@@ -11,7 +11,32 @@ class Cleaner(object):
 		self.type = type
 		self.tolerance = tolerance
 		self.config = config
-		self.logger = Logger.getInstance()
+		self.logger = Logger.get_instance()
+
+	def clfd_cleaner(self, observation, in_file, cleaned_file_path):
+
+		import clfd
+		from clfd.interfaces import PsrchiveInterface
+
+		dirty_channels = self._get_known_dirty_channels(observation, self.tolerance)
+		self.logger.info("{} channels are dirty...".format(len(dirty_channels)))
+
+		archive = ps.Archive_load(in_file)
+
+		cube = clfd.DataCube(archive.get_data()[:, 0, :, :]) 
+		features = clfd.featurize(cube, features=('std', 'ptp', 'lfamp','skew', 'kurtosis', 'acf'))
+		stats, mask = clfd.profile_mask(features, q=4.0,  zap_channels=dirty_channels)	
+	
+		PsrchiveInterface.apply_profile_mask(mask, archive)
+
+		archive.unload(cleaned_file_path.resolve().as_posix())
+
+		del archive, mask, cube
+
+	
+	def coast_guard_cleaner(self, observation, in_file, cleaned_file_path):
+		pass
+
 
 
 
@@ -19,7 +44,6 @@ class Cleaner(object):
 
 
 		cleaned_file_path = observation.construct_output_archive_path(self.config.root_dir_path, out_dir)
-
 		in_file = None
 
 		if out_dir is "cleaned":
@@ -33,44 +57,28 @@ class Cleaner(object):
 			return
 
 		if not Path(in_file).exists():
-			self.logger.fatal("{} does not exist".format(in_file))
+			self.logger.fatal("Input file: {} does not exist".format(in_file))
 			return
 
-
 		if self.type == "clfd":
-			
-			import clfd
-			from clfd.interfaces import PsrchiveInterface
-
-			#thread = Thread(target = clfd_cleaner, args = (self, observation, in_file, cleaned_file_path ))
-			#thread.start()
-			#thread.join()
-
-			dirty_channels = self._get_known_dirty_channels(observation, self.tolerance)
-			self.logger.info("{} channels are dirty...".format(len(dirty_channels)))
-
-			archive = ps.Archive_load(in_file)
-
-			cube = clfd.DataCube(archive.get_data()[:, 0, :, :]) 
-			features = clfd.featurize(cube, features=('std', 'ptp', 'lfamp','skew', 'kurtosis', 'acf'))
-			stats, mask = clfd.profile_mask(features, q=4.0,  zap_channels=dirty_channels)	
-	
-			PsrchiveInterface.apply_profile_mask(mask, archive)
-
-			archive.unload(cleaned_file_path.resolve().as_posix())
-
-			del archive, mask, cube
+			self.clfd_cleaner(observation, in_file, cleaned_file_path)
+		elif self.type == "coast_guard":
+			self.coast_guard_cleaner(observation, in_file, cleaned_file_path)
+		else:
+			self.logger.fatal("Unknown cleaner type: {}".format(self.type))
 
 		if out_dir is "cleaned":
 			observation.cleaned_file = cleaned_file_path.resolve().as_posix() 
 		else:
 			observation.recleaned_file = cleaned_file_path.resolve().as_posix() 
+
 		
+
 
 
 	def _get_known_rfi(self, backend, tolerance):
 
-		# List of known RFI channels (low, high in MHz)
+		# List of known RFI channels (low, high in MHz) obtained from George Hobbs' RFI database
 
 		rfi_list = []
 
@@ -146,6 +154,7 @@ class Cleaner(object):
 			rfi_list.append((2221.0,2222.0))  # unexplained
 			rfi_list.append((2226.3,2226.7))  # unexplained
 			rfi_list.append((1618.0,1626.5))  # Iridium
+			
 			if (tolerance > 1):
 				rfi_list.append((1164.0,1189.0))  # satellite
 				rfi_list.append((1189.0,1214.0))  # satellite
@@ -157,37 +166,37 @@ class Cleaner(object):
 				rfi_list.append((2401.0,2483.0))  # Entire wifi band
 
 
-				rfi_list.append((703.0,713.0)) # 4G Optus
-				rfi_list.append((704.5,708.0)) # Alias
-				rfi_list.append((713.0,733.0))
-				rfi_list.append((825.1,829.9)) # Vodafone 4G
-				rfi_list.append((830.0,845.0))  # Telstra 3G
-				rfi_list.append((847.6,848.0))
-				rfi_list.append((898.4,906.4))# Optus 3G
-				rfi_list.append((906.8,915.0)) # Vodafone 3G
-				rfi_list.append((953.0,960.1))    # Alias
-				rfi_list.append((1710.0,1725.0))  # 4G Telstra
-				rfi_list.append((1745.0,1755.0))  # 4G Optus
-				rfi_list.append((2550.0,2570.0))  # 4G Optus
-				rfi_list.append((1017.0,1019.0))  # Parkes ground response
-				rfi_list.append((1029.0,1031.0))  # Parkes ground response
-				rfi_list.append((1026.8,1027.2))  # Unknown DME signal
-				rfi_list.append((1027.8,1028.2))  # Unknown DME signal
-				rfi_list.append((1032.8,1033.2))  # Unknown DME signal
-				rfi_list.append((1040.8,1041.2))  # Strong, unknown DME signal
-				rfi_list.append((1061.8,1062.2))  # Sydney DME
-				rfi_list.append((1067.8,1068.2))  # Richmond DME
-				rfi_list.append((1071.8,1072.2))  # Wagga Wagga DME
-				rfi_list.append((1079.2,1080.2))  # Unknown DME
-				rfi_list.append((1080.8,1081.2))  # Parkes DME
-				rfi_list.append((1081.8,1082.2))  # Sydney RW07 DME
-				rfi_list.append((1103.8,1104.2))  # Unknown DME
-				rfi_list.append((1102.8,1103.2))  # Unknown DME
-				rfi_list.append((1120.8,1121.2))  # Wagga Wagga DME
-				rfi_list.append((1134.8,1135.2))  # Nowra DME
-				rfi_list.append((1137.6,1138.4))  # Canberra DME
-				rfi_list.append((1149.8,1150.2))  # Likely DME
-				rfi_list.append((1150.8,1151.2))  # Likely DME
+			rfi_list.append((703.0,713.0)) # 4G Optus
+			rfi_list.append((704.5,708.0)) # Alias
+			rfi_list.append((713.0,733.0))
+			rfi_list.append((825.1,829.9)) # Vodafone 4G
+			rfi_list.append((830.0,845.0))  # Telstra 3G
+			rfi_list.append((847.6,848.0))
+			rfi_list.append((898.4,906.4))# Optus 3G
+			rfi_list.append((906.8,915.0)) # Vodafone 3G
+			rfi_list.append((953.0,960.1))    # Alias
+			rfi_list.append((1710.0,1725.0))  # 4G Telstra
+			rfi_list.append((1745.0,1755.0))  # 4G Optus
+			rfi_list.append((2550.0,2570.0))  # 4G Optus
+			rfi_list.append((1017.0,1019.0))  # Parkes ground response
+			rfi_list.append((1029.0,1031.0))  # Parkes ground response
+			rfi_list.append((1026.8,1027.2))  # Unknown DME signal
+			rfi_list.append((1027.8,1028.2))  # Unknown DME signal
+			rfi_list.append((1032.8,1033.2))  # Unknown DME signal
+			rfi_list.append((1040.8,1041.2))  # Strong, unknown DME signal
+			rfi_list.append((1061.8,1062.2))  # Sydney DME
+			rfi_list.append((1067.8,1068.2))  # Richmond DME
+			rfi_list.append((1071.8,1072.2))  # Wagga Wagga DME
+			rfi_list.append((1079.2,1080.2))  # Unknown DME
+			rfi_list.append((1080.8,1081.2))  # Parkes DME
+			rfi_list.append((1081.8,1082.2))  # Sydney RW07 DME
+			rfi_list.append((1103.8,1104.2))  # Unknown DME
+			rfi_list.append((1102.8,1103.2))  # Unknown DME
+			rfi_list.append((1120.8,1121.2))  # Wagga Wagga DME
+			rfi_list.append((1134.8,1135.2))  # Nowra DME
+			rfi_list.append((1137.6,1138.4))  # Canberra DME
+			rfi_list.append((1149.8,1150.2))  # Likely DME
+			rfi_list.append((1150.8,1151.2))  # Likely DME
 
 		return rfi_list
 
