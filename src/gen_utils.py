@@ -127,7 +127,7 @@ class SubProcessRunner(object):
         self.command = command
         self.logger = Logger.get_instance()
         self.proc = None
-        threading.Thread.__init__(self)    
+        #threading.Thread.__init__(self)    
 
     def run(self):
         command_chunks = self.command.split()
