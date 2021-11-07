@@ -51,8 +51,8 @@ class ObservingSession(object):
 		run_process(command)
 		for o in self.observation_chunks:
 			o.psradded_file = out_file
+			self.db_manager.add_to_db(o)
 
-		self.db_manager.add_to_db(self.observation_chunks)
 
 		return out_file
 
