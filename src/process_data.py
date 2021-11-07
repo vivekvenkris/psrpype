@@ -26,7 +26,7 @@ from log import Logger
 from processor import Processor
 from rfi_utils import *
 from session import ObservingSession
-from slurm import Slurm
+from slurm import SlurmLauncher, SlurmChecker
 
 
 def get_args():
@@ -62,33 +62,17 @@ def main():
 	observations = query.all()	
 
 
-
-	slurm = Slurm(config)
+	slurm_launcher = SlurmLauncher(config)
 
 
 	if args.slurm: 
 		
 		for observation in observations:
 
-			biggest_size=0
-			for o in observation.observation_chunks:			
-				biggest_size = o.file_size if o.file_size > biggest_size else biggest_size
-				
-
-			memory = "{}g".format(round(biggest_size * 12))
-			ncpus=1
-			if biggest_size < 5:
-				wall_time="2:00:00"
-			elif biggest_size < 10:
-				wall_time="4:00:00"
-			else:
-				wall_time="24:00:00"
-
 			command = "python {} --config={} --obs_utcs=\"{}\" --stream_log_level=DEBUG".format(Path(__file__).resolve().as_posix(),
 																								Path(args.config).resolve().as_posix(), 
 							observation.obs_start_utc)
-			job_id = slurm.launch(
-				observation.source, observation.obs_start_utc, command, memory, ncpus, wall_time)
+			job_id = slurm_launcher.launch(observation, command)
 			time.sleep(2)
 
 			slurm_job = SlurmJob(id=job_id, state="QUEUED")
@@ -99,6 +83,11 @@ def main():
 
 		logger.info("All jobs submitted..")
 
+		slurm_checker = SlurmChecker()
+		SlurmChecker.signal_init()
+		slurm_checker.start()
+		slurm_checker.join()
+
 
 	else:
 
@@ -108,7 +97,8 @@ def main():
 			observation.processed = True
 			db_manager.add_to_db(observation)
 
- 
+
+
 if __name__ == "__main__":
 	main()
 
