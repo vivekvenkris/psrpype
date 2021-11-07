@@ -43,7 +43,7 @@ def main():
 	# get the list of observations to process
 	query = db_manager.get_session().query(Observation)
 	query = query.filter(Observation.obs_type.in_(CALIBRATOR_TYPES))
-	# query = query.filter(Observation.processed == False)
+	query = query.filter(Observation.processed == False)
 	query = AppUtils.add_shortlist_filters(query, args)
 
 	observations = query.all()
