@@ -176,82 +176,98 @@ def main():
 
 		#Get file infos and sort by start time. 
 		file_infos=get_file_infos(file_list, backends, sources, frequencies)
-		file_infos.sort(key=lambda x: x.start_mjd)
+		file_infos.sort(key=lambda x: x.cfreq)
 		logger.debug(file_infos)
 
 
 
 		collection = Collection(collection_name = dap_dir, name_alias = alt_name, pid=pid, collection_path=in_dir_path.resolve().as_posix())
 
-		for file_info in file_infos:
-			logger.debug("considering {}".format(file_info.file_name))
-
-			file_path = Path(file_info.file_name)
-			file_ext = "".join(file_path.suffixes)
+		file_info_groups = [list(g[1]) for g in groupby( file_infos, lambda o: o.cfreq)] 
 
 
-			dap_path = out_dir.joinpath(pid).joinpath(file_info.source).joinpath(dap_dir+"_"+alt_name)
-			dap_path.mkdir(parents=True, exist_ok=True)
+		for file_info_group in file_info_groups:
 
-			utc_start = get_utc_string(file_info.start_mjd) 
-			utc_end   = get_utc_string(file_info.end_mjd)
+			file_info_group.sort(key=lambda x: x.start_mjd)
 
-			utc_dir = utc_start
+			for file_info in file_info_group:
+				logger.debug("considering {}".format(file_info.file_name))
 
-
-			times_file_path = dap_path.joinpath(TIMES_FILE).resolve()
-
-			if times_file_path.exists():
-
-				times_for_cfreq = get_times_for_cfreq(times_file_path, file_info.cfreq)
-
-				#check if the file is not empty, meaning there are files at this frequency
-				if times_for_cfreq.size is not 0:
+				file_path = Path(file_info.file_name)
+				file_ext = "".join(file_path.suffixes)
 
 
-					#if the files are the same - .rf vs .zrf, look if there are already UTCs with the same name
-					if times_for_cfreq[ times_for_cfreq['utc_dir'] == utc_dir.encode() ].size is not 0:
-						logger.info("Using existing utc_start=utc_dir for {}".format(utc_start))
+				dap_path = out_dir.joinpath(pid).joinpath(file_info.source).joinpath(dap_dir+"_"+alt_name)
+				dap_path.mkdir(parents=True, exist_ok=True)
+
+				utc_start = get_utc_string(file_info.start_mjd) 
+				utc_end   = get_utc_string(file_info.end_mjd)
+
+				utc_dir = utc_start
 
 
+				times_file_path = dap_path.joinpath(TIMES_FILE).resolve()
+
+				if times_file_path.exists():
+
+					times_for_cfreq = get_times_for_cfreq(times_file_path, file_info.cfreq)
+
+					#check if the file is not empty, meaning there are files at this frequency
+					if times_for_cfreq.size is not 0:
+
+
+						#if the files are the same - .rf vs .zrf, look if there are already UTCs with the same name
+						if times_for_cfreq[ times_for_cfreq['utc_dir'] == utc_dir.encode() ].size is not 0:
+							logger.info("Using existing utc_start=utc_dir for {}".format(utc_start))
+
+
+						else:
+
+							#current obs succeeds the previous ones as they are sorted, so mjd_start_now always > mjd_end_before, so this is always positive
+							times_for_cfreq = sorted(times_for_cfreq,key=lambda x: (file_info.start_mjd-x['mjd_end']))
+
+							#if there is a very close UTC
+							if(file_info.start_mjd  - times_for_cfreq[0]['mjd_end'] < TOLERANCE):
+								utc_close = times_for_cfreq[0]['utc_start']
+								utc_dir = times_for_cfreq[0]['utc_dir'].decode() # change the utc directory to the start utc of the observation
+
+
+				with open(times_file_path,'a') as f:
+					line="{:8.3f} {:20.12f} {} {:20.12f} {} {}\n".format(file_info.cfreq, file_info.start_mjd, utc_start, file_info.end_mjd, utc_end,  utc_dir)
+					logger.debug("writing to times.dat: {}".format(line))
+					f.write(line)
+
+
+				new_path = dap_path.joinpath(utc_dir).joinpath(str(file_info.cfreq))
+				new_path.mkdir(parents=True, exist_ok=True)
+
+				new_file_path = new_path.joinpath(utc_start + file_ext)
+				if not new_file_path.exists():
+					new_file_path.symlink_to(file_path)
+					observation_chunk = file_info.observation_chunk
+					observation_chunk.sym_file = new_file_path.absolute().as_posix()
+					observation_chunk.original_file = file_path.resolve().as_posix()
+					observation_chunk.obs_start_utc = utc_dir
+					collection.observation_chunks.append(observation_chunk)
+				else:
+					logger.warn("{} already exists, skipping...".format(new_file_path.resolve().as_posix() ))    
+
+			session.add(collection)
+			
+
+
+			# group observation chunks by start utc and add it to observations table
+			for group in [list(g[1]) for g in groupby(collection.observation_chunks, lambda o: o.obs_start_utc)]:
+				observation = None
+				with session.no_autoflush:
+					observation = db_manager.get_session().query(Observation).filter(
+						Observation.obs_start_utc == group[0].obs_start_utc).filter(Observation.cfreq == group[0].cfreq).first()
+					if observation is None:
+						observation = Observation(group)
 					else:
-
-						#current obs succeeds the previous ones as they are sorted, so mjd_start_now always > mjd_end_before, so this is always positive
-						times_for_cfreq = sorted(times_for_cfreq,key=lambda x: (file_info.start_mjd-x['mjd_end']))
-
-						#if there is a very close UTC
-						if(file_info.start_mjd  - times_for_cfreq[0]['mjd_end'] < TOLERANCE):
-							utc_close = times_for_cfreq[0]['utc_start']
-							utc_dir = times_for_cfreq[0]['utc_dir'].decode() # change the utc directory to the start utc of the observation
-
-
-			with open(times_file_path,'a') as f:
-				line="{:8.3f} {:20.12f} {} {:20.12f} {} {}\n".format(file_info.cfreq, file_info.start_mjd, utc_start, file_info.end_mjd, utc_end,  utc_dir)
-				logger.debug("writing to times.dat: {}".format(line))
-				f.write(line)
-
-
-			new_path = dap_path.joinpath(utc_dir).joinpath(str(file_info.cfreq))
-			new_path.mkdir(parents=True, exist_ok=True)
-
-			new_file_path = new_path.joinpath(utc_start + file_ext)
-			if not new_file_path.exists():
-				new_file_path.symlink_to(file_path)
-				observation_chunk = file_info.observation_chunk
-				observation_chunk.sym_file = new_file_path.absolute().as_posix()
-				observation_chunk.original_file = file_path.resolve().as_posix()
-				observation_chunk.obs_start_utc = utc_dir
-				collection.observation_chunks.append(observation_chunk)
-			else:
-				logger.warn("{} already exists, skipping...".format(new_file_path.resolve().as_posix() ))    
-
-		session.add(collection)
-
-		# group observation chunks by start utc and add it to observations table
-		for group in [list(g[1]) for g in groupby(collection.observation_chunks, lambda o: o.obs_start_utc)]:
-			observation = Observation(group)
-			session.add(observation)
-		session.commit()
+						observation.observation_chunks.extend(group)
+					session.add(observation)
+			session.commit()
 
 
 	session.commit()
