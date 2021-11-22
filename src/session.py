@@ -13,7 +13,7 @@ class ObservingSession(object):
 		self.db_manager = DBManager.get_instance()
 		self.config = config
 
-	def process(self):
+	def process(self, consolidate = True):
 		for observation_chunk in self.observation_chunks:
 
 			self.logger.debug("considering {}".format(observation_chunk))
@@ -27,9 +27,10 @@ class ObservingSession(object):
 
 			observation_chunk.processed = True
 			self.db_manager.add_to_db(observation_chunk)
-
 		
-		self._consolidate()
+
+		if consolidate:
+			self._consolidate()
 
 
 	def _consolidate(self):
@@ -37,7 +38,7 @@ class ObservingSession(object):
 		self._decimate(psradded_file)
 
 	def _psradd(self):
-		self.logger.debug("Psradding...")
+		self.logger.debug("Psradding..." + str([o.recleaned_file for o in self.observation_chunks]))
 		files = " ".join([o.recleaned_file for o in self.observation_chunks])
 		out_file = self.observation_chunks[0].construct_output_path(self.config.root_dir_path, "").joinpath(
 			self.observation_chunks[0].source + "_" + self.observation_chunks[0].obs_start_utc + "_psradd.rf").resolve().as_posix()
@@ -51,7 +52,8 @@ class ObservingSession(object):
 		run_process(command)
 		for o in self.observation_chunks:
 			o.psradded_file = out_file
-			self.db_manager.add_to_db(o)
+		
+		self.db_manager.add_to_db(self.observation_chunks)
 
 
 		return out_file
@@ -68,14 +70,22 @@ class ObservingSession(object):
 			decimation_list = self.config.decimation_list[self.observation_chunks[0].source]
 			decimated_file_path = self.observation_chunks[0].construct_output_path(
 														self.config.root_dir_path, "decimated")
-			for flags in decimation_list.strip().split(","):
-				command = "pam {} {} -u {}".format(
-					flags, psradded_file, decimated_file_path.resolve().as_posix())
-				self.logger.debug("Running {}".format(command))
-				run_process(command)
-				self.logger.debug("decimated file: {}".format(decimated_file_path.resolve().as_posix()))
+													
+			decimations = decimation_list.strip().split(",")			
+			num_files_in_dir = len(list(decimated_file_path.glob('*')))
 
-			self.logger.debug(" All decimations done successfully...")
+			if num_files_in_dir == len(decimations):
+				self.logger.debug("Decimated files already exists in system, skipping...")
+
+			else:
+				for flags in decimations:
+					command = "pam {} {} -u {}".format(
+						flags, psradded_file, decimated_file_path.resolve().as_posix())
+					self.logger.debug("Running {}".format(command))
+					run_process(command)
+					self.logger.debug("decimated file: {}".format(decimated_file_path.resolve().as_posix()))
+
+				self.logger.debug(" All decimations done successfully...")
 		
 			self.observation.decimated = True
 			self.db_manager.add_to_db(self.observation)
