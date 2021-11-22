@@ -13,12 +13,12 @@ class Cleaner(object):
 		self.config = config
 		self.logger = Logger.get_instance()
 
-	def clfd_cleaner(self, observation, in_file, cleaned_file_path):
+	def clfd_cleaner(self, observation_chunk, in_file, cleaned_file_path):
 
 		import clfd
 		from clfd.interfaces import PsrchiveInterface
 
-		dirty_channels = self._get_known_dirty_channels(observation, self.tolerance)
+		dirty_channels = self._get_known_dirty_channels(observation_chunk, self.tolerance)
 		self.logger.info("{} channels are dirty...".format(len(dirty_channels)))
 
 		archive = ps.Archive_load(in_file)
@@ -40,37 +40,36 @@ class Cleaner(object):
 
 
 
-	def clean_and_save(self, observation, out_dir):
+	def clean_and_save(self, observation_chunk, out_dir):
 
 
-		cleaned_file_path = observation.construct_output_archive_path(self.config.root_dir_path, out_dir)
+		cleaned_file_path = observation_chunk.construct_output_archive_path(self.config.root_dir_path, out_dir)
 		in_file = None
 
 		if out_dir is "cleaned":
-			in_file = observation.preprocessed_file  if observation.preprocessed_file is not None else observation.sym_file
+			in_file = observation_chunk.preprocessed_file  if observation_chunk.preprocessed_file is not None else observation_chunk.sym_file
 		else:
-			in_file = observation.calibrated_file
+			in_file = observation_chunk.calibrated_file
 
 
 		if cleaned_file_path.exists():
 			self.logger.warn("Cleaned file already exists: {}, skipping...".format(cleaned_file_path))
-			return
+		else: 
+			if not Path(in_file).exists():
+				self.logger.fatal("Input file: {} does not exist".format(in_file))
+				return
 
-		if not Path(in_file).exists():
-			self.logger.fatal("Input file: {} does not exist".format(in_file))
-			return
-
-		if self.type == "clfd":
-			self.clfd_cleaner(observation, in_file, cleaned_file_path)
-		elif self.type == "coast_guard":
-			self.coast_guard_cleaner(observation, in_file, cleaned_file_path)
-		else:
-			self.logger.fatal("Unknown cleaner type: {}".format(self.type))
+			if self.type == "clfd":
+				self.clfd_cleaner(observation_chunk, in_file, cleaned_file_path)
+			elif self.type == "coast_guard":
+				self.coast_guard_cleaner(observation_chunk, in_file, cleaned_file_path)
+			else:
+				self.logger.fatal("Unknown cleaner type: {}".format(self.type))
 
 		if out_dir is "cleaned":
-			observation.cleaned_file = cleaned_file_path.resolve().as_posix() 
+			observation_chunk.cleaned_file = cleaned_file_path.resolve().as_posix() 
 		else:
-			observation.recleaned_file = cleaned_file_path.resolve().as_posix() 
+			observation_chunk.recleaned_file = cleaned_file_path.resolve().as_posix() 
 
 		
 
@@ -222,6 +221,7 @@ class Cleaner(object):
 
 
 		return np.unique(dirty_channels).astype(int)
+
 
 
 
