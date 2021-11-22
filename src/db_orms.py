@@ -1,18 +1,17 @@
-from sqlalchemy import Column, Integer, String, Float,BigInteger
-from sqlalchemy import create_engine, ForeignKey
-from sqlalchemy.orm import relationship
-from sqlalchemy.orm import declarative_base
-from sqlalchemy.orm import sessionmaker
-import sqlalchemy
 from pathlib import Path
 
-from sqlalchemy.sql.sqltypes import Boolean
-from log import Logger
-from gen_utils import get_utc_string
-from constants import FLUX_CALIBRATOR_SOURCES, FLUXCAL_DIR, POLNCAL_DIR, PULSAR_DIR, SCRATCH_DIR
-from exceptions import IncorrectInputsException
 import numpy as np
+import sqlalchemy
+from sqlalchemy import (BigInteger, Column, Float, ForeignKey, Integer, String,
+                        create_engine)
+from sqlalchemy.orm import declarative_base, relationship, sessionmaker
+from sqlalchemy.sql.sqltypes import Boolean
 
+from constants import (FLUX_CALIBRATOR_SOURCES, FLUXCAL_DIR, POLNCAL_DIR,
+                       PULSAR_DIR, SCRATCH_DIR)
+from exceptions import IncorrectInputsException
+from gen_utils import get_utc_string
+from log import Logger
 
 Base = declarative_base()
 
@@ -165,11 +164,11 @@ class ObservationChunk(Base):
 			out_root_dir = POLNCAL_DIR
 		else:
 			out_root_dir = PULSAR_DIR
-
+		collection_dir_name = self.collection.collection_name+"_"+self.collection.name_alias if self.collection.name_alias is not None else self.collection.collection_name
 		out_path = (root_dir_path.joinpath(out_root_dir)
 										.joinpath(self.collection.pid)
 										.joinpath(self.source)
-										.joinpath(self.collection.collection_name)
+										.joinpath(collection_dir_name)
 										.joinpath(self.obs_start_utc)
 										.joinpath(str(self.cfreq))
 										.joinpath(process_str))
@@ -227,7 +226,8 @@ class DBManager(object):
 		self.logger = Logger.get_instance()
 		self.logger.debug("Opening {} ".format(db_path ))
 
-		self._engine = create_engine('sqlite+pysqlite:////{}'.format(db_path), echo=False, future=True, connect_args={'timeout': 600})
+		self._engine = create_engine('sqlite+pysqlite:////{}?check_same_thread=False'.format(
+			db_path), echo=False, future=True, connect_args={'timeout': 600})
 		self._Session = sessionmaker(bind=self._engine)	
 		self._current_session = None
 		
@@ -239,13 +239,14 @@ class DBManager(object):
 	def add_to_db(self, objs):
 		session = self.get_session()
 
-		if type(objs) == list or type(objs) == np.ndarray:
+		try:
 			for x in objs:
 				session.add(x) 
-		else:
+		except TypeError:
 			session.add(objs)
-
+			
 		session.commit()
+		
 
 	def get_session(self):
 		if self._current_session is None:
@@ -258,6 +259,7 @@ class DBManager(object):
 		return self._current_session
 
 	def close_session(self):
+		self._current_session.expunge_all()
 		self._current_session.close()
 		self._current_session = None
 
