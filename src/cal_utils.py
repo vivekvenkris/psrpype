@@ -40,26 +40,29 @@ class CalUtils(object):
 			self.logger.warn("No new lines to add from {} to {}".format(local_db, global_db))
 
 
-	def add_to_fluxcal_db(self, local_db_file):
-		self.get_fluxcal_solutions(local_db_file)
+	def add_to_fluxcal_db(self, local_db_file, cfreq):
+		self.get_fluxcal_solutions(local_db_file, cfreq)
 		self.add_to_db(self.global_fluxcal_db, local_db_file)
 
 
 	def add_to_polncal_db(self, local_db_file):
 		self.add_to_db(self.global_polncal_db, local_db_file)
 
-	def get_fluxcal_solutions(self, local_db_file):
-		out_dir_path = self.config.root_dir_path.joinpath(FLUXCAL_SOLUTIONS_DIR)
+	def get_fluxcal_solutions(self, local_db_file, cfreq):
+		out_dir_path = self.config.root_dir_path.joinpath(FLUXCAL_SOLUTIONS_DIR).joinpath(str(cfreq))
 		out_dir_path.mkdir(exist_ok=True, parents=True)
 		command = "fluxcal -K 3.0 -d {} -O {}".format(local_db_file,out_dir_path.resolve().as_posix())
 		self.logger.debug("Running command: {}".format(command))
 		run_process(command)
 
 
+
 	def create_cal_db(self, archive_list, list_file_name):
 
 		scratch_dir_path = self.config.root_dir_path.joinpath(SCRATCH_DIR)
 		list_file_path = self.config.root_dir_path.joinpath(SCRATCH_DIR).joinpath(list_file_name)
+
+		
 
 		np.savetxt(list_file_path.resolve().as_posix(),	np.array(archive_list), delimiter=" ", newline = "\n", fmt="%s")
 
