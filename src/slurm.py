@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 import signal
-
+import math
 from config_parser import ConfigurationReader
 from constants import PULSAR_TYPES
 from db_orms import DBManager, Observation, SlurmJob
@@ -59,8 +59,8 @@ class SlurmLauncher(object):
 		biggest_size = 0
 		for o in observation.observation_chunks:
 				biggest_size = o.file_size if o.file_size > biggest_size else biggest_size
-
-		memory = "{}g".format(round(biggest_size * 20))
+		total_size = biggest_size * len(observation.observation_chunks) # just being conservative
+		memory = "{}g".format(math.ceil(biggest_size * 28))
 		ncpus = 1
 		if biggest_size < 5:
 			wall_time = "4:00:00"
@@ -68,7 +68,6 @@ class SlurmLauncher(object):
 			wall_time = "8:00:00"
 		else:
 			wall_time = "24:00:00"
-
 
 		directory = observation.observation_chunks[0].construct_output_path(self.config.root_dir_path, "").resolve().as_posix()
 		self.logger.debug("Directory for slurm script and log: {}".format(directory))
@@ -110,7 +109,6 @@ class SlurmLauncher(object):
 
 
 
-event = threading.Event()
 class SlurmChecker(threading.Thread):
 
 	stop = threading.Event()
@@ -124,16 +122,22 @@ class SlurmChecker(threading.Thread):
 		signal.signal(signal.SIGINT, SlurmChecker.signal_handler)
 
 		
-	def __init__(self):
+	def __init__(self, job_ids=None):
 		self.logger = Logger.get_instance()
 		self.db_manager = DBManager.get_instance()
+		self.job_ids = job_ids
+		if self.job_ids is None:
+			query = self.db_manager.get_session().query(Observation)
+			query = query.filter(Observation.obs_type.in_(PULSAR_TYPES))
+			query = query.filter(Observation.processed == False)
+			query = query.filter(Observation.slurm_id != None)
+			self.job_ids = [obs.slurm_id for obs in query.all()]
 		threading.Thread.__init__(self)
 
 
 
 
 	def get_job_dict(self,jobids):
-		print(jobids)
 		command = "sacct -Pn  -o jobid,state%50 -j {}".format(",".join([str(i) for i in jobids]))
 		output = run_process(command)
 		job_dict = {}
@@ -145,31 +149,28 @@ class SlurmChecker(threading.Thread):
 		
 
 	def check_and_update_jobs(self):
-
-		query = self.db_manager.get_session().query(Observation)
-		query = query.filter(Observation.obs_type.in_(PULSAR_TYPES))
-		query = query.filter(Observation.processed == False)
-		query = query.filter(Observation.slurm_id != None)
-		job_ids = [obs.slurm_id for obs in query.all()]
-
-		self.logger.debug("jobs_ids: {}".format(job_ids))
-		if len(job_ids) > 0:
-			job_info_dict = self.get_job_dict(job_ids)
-
-			for job_id in job_ids:
+		self.logger.debug("jobs_ids: {}".format(self.job_ids))
+		if len(self.job_ids) > 0:
+			job_info_dict = self.get_job_dict(self.job_ids)
+			for job_id in self.job_ids[:]:
 				slurm_job = self.db_manager.get_session().query(SlurmJob).filter(SlurmJob.id == job_id).first()
 				new_status = job_info_dict[str(job_id)]
 				self.logger.debug("Job ID: {} old status: {} new status: {}".format(
 					job_id, slurm_job.state, new_status))
 				if new_status != slurm_job.state:
 					slurm_job.state = new_status
-					self.db_manager.get_session().commit()
+					self.db_manager.add_to_db(slurm_job)
 					if(new_status not in ['COMPLETED','PENDING', 'RUNNING']):
 						self.logger.error("Job {}  failed with status {}".format(
 							job_id, new_status))
+						
+					if(new_status in ['COMPLETED','FAILED', 'OUT_OF_MEMORY']):
+						self.job_ids.remove(job_id)			
 							
 		else:
 			self.logger.info("No jobs to check...")
+			SlurmChecker.stop.set()
+			
 						
 
 	def run(self):
@@ -177,8 +178,9 @@ class SlurmChecker(threading.Thread):
 			self.logger.debug("checking slurm jobs...")
 			self.check_and_update_jobs()
 			self.logger.debug("waiting for 120 seconds...")
-			event.wait(timeout=120)
-			if event.is_set():
+			SlurmChecker.stop.wait(timeout=120)
+			if SlurmChecker.stop.is_set():
+				print("event is set, aborting..")
 				break
 		self.logger.debug("Thread stopping...")
 
