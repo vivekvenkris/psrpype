@@ -157,7 +157,7 @@ class ConfigurationReader(object):
 	def _copy_pcm_files(cls, out_path):
 		file_path=Path(__file__)
 		resources_dir = file_path.parent.parent.joinpath("resources")
-		metm_pcm_file_paths = resources_dir.glob('*_metm.pcm') # file name of the form UTC_metm.pcm
+		metm_pcm_file_paths = resources_dir.glob('*_metm_*.pcm') # file name of the form UTC_metm_band.pcm
 
 		new_file_names = []
 		for metm_pcm_file_path in metm_pcm_file_paths:
